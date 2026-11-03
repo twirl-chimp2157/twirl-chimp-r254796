@@ -1,0 +1,65 @@
+name: Surveillance et Réveil Multi-Comptes
+
+on:
+  push:
+  workflow_dispatch:
+  schedule:
+    - cron: '*/60 * * * *'
+
+jobs:
+  check-and-wakeup-all:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Vérification et réveil des Codespaces
+        env:
+          TOKENS: ${{ secrets.TOKENS }}
+        run: |
+          set -u
+
+          if [ -z "$TOKENS" ]; then
+            echo "Aucun token configuré dans TOKENS."
+            exit 1
+          fi
+
+          COMPTE_NUM=0
+
+          while IFS= read -r CURRENT_TOKEN; do
+            [ -z "$CURRENT_TOKEN" ] && continue
+
+            COMPTE_NUM=$((COMPTE_NUM + 1))
+            echo "----------------------------------------------"
+            echo "Analyse du compte #$COMPTE_NUM"
+
+            export GH_TOKEN="$CURRENT_TOKEN"
+
+            INFO=$(gh codespace list --json name,state 2>/dev/null || echo "[]")
+
+            if [ -z "$INFO" ] || [ "$INFO" = "[]" ]; then
+              echo "Aucun Codespace trouvé."
+              continue
+            fi
+
+            echo "$INFO" | jq -c '.[]' | while read -r CODESPACE; do
+              NAME=$(echo "$CODESPACE" | jq -r '.name')
+              STATE=$(echo "$CODESPACE" | jq -r '.state')
+
+              echo "Codespace : $NAME"
+              echo "État      : $STATE"
+
+              if [ "$STATE" = "Shutdown" ] || [ "$STATE" = "Stopped" ]; then
+                echo "Réveil de $NAME..."
+
+                if gh api -X POST "/user/codespaces/$NAME/start" >/dev/null 2>&1; then
+                  echo "Démarrage demandé."
+                else
+                  echo "Échec du démarrage."
+                fi
+              else
+                echo "Déjà actif."
+              fi
+            done
+          done <<< "$TOKENS"
+
+          echo "----------------------------------------------"
+          echo "Vérification terminée : $COMPTE_NUM compte(s)."
